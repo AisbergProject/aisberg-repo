@@ -1,0 +1,16 @@
+#!/bin/sh
+set -e
+. /usr/share/debconf/confmodule
+
+# Задаем вопрос о роли
+db_input high aisberg/role || true
+db_go || true
+
+# Получаем ответ, чтобы понять, нужно ли спрашивать остальное
+db_get aisberg/role
+if [ "$RET" = "Server" ]; then
+    db_input high aisberg/win_ip || true
+    db_input high aisberg/minio_url || true
+    db_input high aisberg/cold_days || true
+    db_go || true
+fi
