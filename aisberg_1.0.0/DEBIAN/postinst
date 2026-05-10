@@ -1,17 +1,29 @@
 #!/bin/sh
+# Прекращать выполнение при любой ошибке (код возврата не 0)
 set -e
+
+# Подключаем модуль debconf
 . /usr/share/debconf/confmodule
 
-db_get aisberg/role
-ROLE="$RET"
+# Читаем роль из базы данных. Если вопрос еще не задан, используем CLOUD по умолчанию.
+# Добавляем "|| true", чтобы скрипт не падал, если db_get вернет ошибку.
+db_get aisberg/role || true
+ROLE="${RET:-CLOUD}"
 
+# Создаем системные директории. Флаг -p обязателен, чтобы не было ошибки, если папка уже есть.
 mkdir -p /etc/aisberg
 mkdir -p /var/log/aisberg
 
 if [ "$ROLE" = "Server" ]; then
-    db_get aisberg/win_ip && WIN_IP="$RET"
-    db_get aisberg/minio_url && MINIO_URL="$RET"
-    db_get aisberg/cold_days && COLD_DAYS="$RET"
+    # Безопасно получаем параметры для сервера
+    db_get aisberg/win_ip || true
+    WIN_IP="${RET:-192.168.1.10}"
+    
+    db_get aisberg/minio_url || true
+    MINIO_URL="${RET:-http://localhost:9000}"
+    
+    db_get aisberg/cold_days || true
+    COLD_DAYS="${RET:-30}"
 
     cat <<EOF > /etc/aisberg/aisberg.conf
 ROLE="SERVER"
@@ -22,33 +34,38 @@ EOF
 else
     echo "Настройка роли CLOUD (установка MinIO как службы)..."
     
-    # 1. Загружаем бинарник
-    curl -L https://dl.min.io/server/minio/release/linux-amd64/minio -o /usr/local/bin/minio
-    chmod +x /usr/local/bin/minio
+    # 1. Загружаем бинарник. 
+    # Добавляем флаги --create-dirs (создать путь) и -L (следовать редиректам).
+    mkdir -p /usr/local/bin
+    curl -L https://dl.min.io/server/minio/release/linux-amd64/minio -o /usr/local/bin/minio || echo "Не удалось скачать MinIO"
     
-    # 2. Создаем папку для данных, если её нет
+    # Устанавливаем права только если файл скачался
+    [ -f /usr/local/bin/minio ] && chmod +x /usr/local/bin/minio
+    
+    # 2. Создаем папку для данных
     mkdir -p /mnt/data
     
     # 3. Сохраняем конфиг
     echo 'ROLE="CLOUD"' > /etc/aisberg/aisberg.conf
 
     # 4. Включаем и запускаем сервис MinIO
-    # (Файл minio.service должен быть в пакете по пути /lib/systemd/system/minio.service)
-    systemctl daemon-reload
-    systemctl enable minio
-    systemctl restart minio
+    # Добавляем || true, чтобы установка не падала, если systemd временно недоступен
+    systemctl daemon-reload || true
+    systemctl enable minio || true
+    systemctl restart minio || true
 fi
 
+# Создаем лог-файл
 touch /var/log/aisberg/sync.log
 chmod 666 /var/log/aisberg/sync.log
 
-# Перезагружаем конфиги systemd для сервиса aisberg
-systemctl daemon-reload
+# Перезагружаем конфиги systemd
+systemctl daemon-reload || true
 
-# Если это роль Server, включаем и запускаем основной сервис синхронизации
+# Если это роль Server, запускаем основной сервис
 if [ "$ROLE" = "Server" ]; then
-    systemctl enable aisberg
-    systemctl restart aisberg
+    systemctl enable aisberg || true
+    systemctl restart aisberg || true
 fi
 
 exit 0

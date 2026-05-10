@@ -1,0 +1,16 @@
+Template: aisberg/role
+Type: select
+Choices: Server, CLOUD
+Default: CLOUD
+Description: Выберите роль узла платформы Aisberg
+ Description-ru: Выберите роль узла платформы Aisberg. Server — для синхронизации, CLOUD — для объектного хранилища.
+
+Template: aisberg/win_ip
+Type: string
+Default: 192.168.1.10
+Description: IP-адрес Windows-сервера
+
+Template: aisberg/minio_url
+Type: string
+Default: http://localhost:9000
+Description: URL для MinIO
