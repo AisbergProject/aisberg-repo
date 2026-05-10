@@ -30,4 +30,12 @@ fi
 
 touch /var/log/aisberg/sync.log
 chmod 666 /var/log/aisberg/sync.log
+# Перезагружаем конфиги systemd, чтобы он увидел новый сервис
+systemctl daemon-reload
+
+# Если это роль Server, включаем и запускаем сервис
+if [ "$ROLE" = "Server" ]; then
+    systemctl enable aisberg
+    systemctl restart aisberg
+fi
 exit 0
