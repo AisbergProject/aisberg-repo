@@ -32,11 +32,15 @@ else
     # 3. Сохраняем конфиг
     echo 'ROLE="CLOUD"' > /etc/aisberg/aisberg.conf
 
-    # 4. Включаем и запускаем сервис MinIO
-    # (Файл minio.service должен быть в пакете по пути /lib/systemd/system/minio.service)
-    systemctl daemon-reload
-    systemctl enable minio
-    systemctl restart minio
+# 4. Включаем и запускаем сервис MinIO (ОБНОВЛЕННЫЙ БЛОК С ПРОВЕРКОЙ)
+    if [ -f "/lib/systemd/system/minio.service" ]; then
+        echo "Активация службы MinIO..."
+        systemctl daemon-reload
+        systemctl enable minio
+        systemctl restart minio
+    else
+        echo "ПРЕДУПРЕЖДЕНИЕ: Файл minio.service не найден, автозапуск не настроен"
+    fi
 fi
 
 touch /var/log/aisberg/sync.log
