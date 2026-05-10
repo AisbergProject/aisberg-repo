@@ -20,22 +20,35 @@ MINIO_ENDPOINT="$MINIO_URL"
 MIGRATION_DAYS="$COLD_DAYS"
 EOF
 else
-    echo "Настройка роли CLOUD (прямая загрузка бинарного файла)..."
-    # Загружаем бинарник напрямую, чтобы не трогать базу данных dpkg
+    echo "Настройка роли CLOUD (установка MinIO как службы)..."
+    
+    # 1. Загружаем бинарник
     curl -L https://dl.min.io/server/minio/release/linux-amd64/minio -o /usr/local/bin/minio
     chmod +x /usr/local/bin/minio
     
+    # 2. Создаем папку для данных, если её нет
+    mkdir -p /mnt/data
+    
+    # 3. Сохраняем конфиг
     echo 'ROLE="CLOUD"' > /etc/aisberg/aisberg.conf
+
+    # 4. Включаем и запускаем сервис MinIO
+    # (Файл minio.service должен быть в пакете по пути /lib/systemd/system/minio.service)
+    systemctl daemon-reload
+    systemctl enable minio
+    systemctl restart minio
 fi
 
 touch /var/log/aisberg/sync.log
 chmod 666 /var/log/aisberg/sync.log
-# Перезагружаем конфиги systemd, чтобы он увидел новый сервис
+
+# Перезагружаем конфиги systemd для сервиса aisberg
 systemctl daemon-reload
 
-# Если это роль Server, включаем и запускаем сервис
+# Если это роль Server, включаем и запускаем основной сервис синхронизации
 if [ "$ROLE" = "Server" ]; then
     systemctl enable aisberg
     systemctl restart aisberg
 fi
+
 exit 0

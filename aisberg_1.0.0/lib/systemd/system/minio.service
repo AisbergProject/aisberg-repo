@@ -1,0 +1,12 @@
+[Unit]
+Description=Aisberg Cloud Storage (MinIO)
+After=network.target
+
+[Service]
+# Предполагаем, что бинарник скачивается в /usr/local/bin
+ExecStart=/usr/local/bin/minio server /mnt/data --console-address ":9001"
+Restart=always
+User=root
+
+[Install]
+WantedBy=multi-user.target
