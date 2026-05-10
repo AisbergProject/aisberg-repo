@@ -1,0 +1,33 @@
+#!/bin/sh
+set -e
+. /usr/share/debconf/confmodule
+
+db_get aisberg/role
+ROLE="$RET"
+
+mkdir -p /etc/aisberg
+mkdir -p /var/log/aisberg
+
+if [ "$ROLE" = "Server" ]; then
+    db_get aisberg/win_ip && WIN_IP="$RET"
+    db_get aisberg/minio_url && MINIO_URL="$RET"
+    db_get aisberg/cold_days && COLD_DAYS="$RET"
+
+    cat <<EOF > /etc/aisberg/aisberg.conf
+ROLE="SERVER"
+WINDOWS_IP="$WIN_IP"
+MINIO_ENDPOINT="$MINIO_URL"
+MIGRATION_DAYS="$COLD_DAYS"
+EOF
+else
+    echo "Настройка роли CLOUD (прямая загрузка бинарного файла)..."
+    # Загружаем бинарник напрямую, чтобы не трогать базу данных dpkg
+    curl -L https://dl.min.io/server/minio/release/linux-amd64/minio -o /usr/local/bin/minio
+    chmod +x /usr/local/bin/minio
+    
+    echo 'ROLE="CLOUD"' > /etc/aisberg/aisberg.conf
+fi
+
+touch /var/log/aisberg/sync.log
+chmod 666 /var/log/aisberg/sync.log
+exit 0

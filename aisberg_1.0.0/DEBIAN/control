@@ -1,0 +1,8 @@
+Package: aisberg
+Version: 1.0.0-Release
+Section: utils
+Priority: optional
+Architecture: all
+Depends: curl, coreutils, debconf, cifs-utils, mc
+Maintainer: AisbergProject
+Description: Hybrid file storage migration platform
