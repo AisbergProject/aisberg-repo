@@ -13,8 +13,8 @@ LOG="/var/log/aisberg/sync.log"
 SOURCE="/mnt/win_client/Users"
 
 # === ДОБАВЛЕНО: Авто-настройка бакета при старте ===
-# Используем имя хоста для уникальности бакета
-BUCKET_NAME="cold-storage-$(hostname)"
+# Используем имя хоста в нижнем регистре для уникальности бакета
+BUCKET_NAME="cold-storage-$(hostname | tr '[:upper:]' '[:lower:]')"
 DEST_CLOUD="mycloud/$BUCKET_NAME"
 
 echo "$(date '+%Y-%m-%d %H:%M:%S') --- СТАРТ СЕРВИСА A.I.S.B.E.R.G. ---" >> "$LOG"
