@@ -1,7 +1,6 @@
 #!/bin/bash
 
 # --- 1. ИНИЦИАЛИЗАЦИЯ И НАСТРОЙКИ ---
-# Загружаем переменные из конфига, созданного при установке
 CONF="/etc/aisberg/aisberg.conf"
 if [ -f "$CONF" ]; then
     source "$CONF"
@@ -10,106 +9,91 @@ else
     exit 1
 fi
 
-# Переменные из конфига: $WINDOWS_IP, $MINIO_ENDPOINT, $MIGRATION_DAYS
 LOG="/var/log/aisberg/sync.log"
 SOURCE="/mnt/win_client/Users"
-# Бакет в облаке (можно добавить в конфиг, пока оставим archive)
-DEST_CLOUD="mycloud/archive"
 
-# Переменная для статуса целостности (по умолчанию 1 - все ок)
+# === ДОБАВЛЕНО: Авто-настройка бакета при старте ===
+# Используем имя хоста для уникальности бакета
+BUCKET_NAME="cold-storage-$(hostname)"
+DEST_CLOUD="mycloud/$BUCKET_NAME"
+
+echo "$(date '+%Y-%m-%d %H:%M:%S') --- СТАРТ СЕРВИСА A.I.S.B.E.R.G. ---" >> "$LOG"
+
+# Настройка псевдонима и создание бакета (делаем 1 раз при запуске)
+/usr/local/bin/mc alias set mycloud "$MINIO_ENDPOINT" minioadmin minioadmin --api S3v4 >> "$LOG" 2>&1
+/usr/local/bin/mc mb --ignore-existing mycloud/"$BUCKET_NAME" >> "$LOG" 2>&1
+
+# Переменная для статуса целостности
 CHECKSUM_STATUS=1
-
-echo "$(date '+%Y-%m-%d %H:%M:%S') --- СТАРТ ЦИКЛА МИГРАЦИИ (A.I.S.B.E.R.G.) ---" >> "$LOG"
 
 # --- НАЧАЛО БЕСКОНЕЧНОГО ЦИКЛА ---
 while true; do
     CHECKSUM_STATUS=1
     echo "$(date '+%Y-%m-%d %H:%M:%S') --- СТАРТ ЦИКЛА МИГРАЦИИ ---" >> "$LOG"
 
-# --- 2. ОСНОВНОЙ ЦИКЛ ПОИСКА И ПЕРЕНОСА ---
-# Ищем файлы по типам и времени доступа (atime), исключая системные папки Windows
-find "$SOURCE" -type f \( -name "*.pdf" -o -name "*.docx" -o -name "*.txt" \) \
--atime +"$MIGRATION_DAYS" -not -path "*/AppData/*" 2>/dev/null | while read -r FILE; do
-    
-    FNAME=$(basename "$FILE")
-    echo "$(date '+%Y-%m-%d %H:%M:%S') Работа с файлом: $FNAME" >> "$LOG"
+    # --- 2. ОСНОВНОЙ ЦИКЛ ПОИСКА И ПЕРЕНОСА ---
+    find "$SOURCE" -type f \( -name "*.pdf" -o -name "*.docx" -o -name "*.txt" \) \
+    -atime +"$MIGRATION_DAYS" -not -path "*/AppData/*" 2>/dev/null | while read -r FILE; do
+        
+        FNAME=$(basename "$FILE")
+        echo "$(date '+%Y-%m-%d %H:%M:%S') Работа с файлом: $FNAME" >> "$LOG"
 
-    # Шаг 1: Считаем хэш оригинала (эталон)
-    SOURCE_HASH=$(md5sum "$FILE" | awk '{ print $1 }')
+        SOURCE_HASH=$(md5sum "$FILE" | awk '{ print $1 }')
 
-    # Шаг 2: SMART SYNC (Проверка существования и идентичности в облаке)
-    CLOUD_CHECK=$(mc ls --json "$DEST_CLOUD/$FNAME" 2>/dev/null)
-    
-    if [ -n "$CLOUD_CHECK" ]; then
-        REMOTE_HASH=$(echo "$CLOUD_CHECK" | grep -oP '(?<="etag":")[^"]+' | tr -d '"')
+        # SMART SYNC (Проверка существования)
+        CLOUD_CHECK=$(/usr/local/bin/mc ls --json "$DEST_CLOUD/$FNAME" 2>/dev/null)
+        
+        if [ -n "$CLOUD_CHECK" ]; then
+            REMOTE_HASH=$(echo "$CLOUD_CHECK" | grep -oP '(?<="etag":")[^"]+' | tr -d '"')
 
-        if [ "$SOURCE_HASH" == "$REMOTE_HASH" ]; then
-            echo "  [SKIP] Файл уже есть в облаке и идентичен. Пропуск." >> "$LOG"
-            continue
+            if [ "$SOURCE_HASH" == "$REMOTE_HASH" ]; then
+                echo "  [SKIP] Файл уже есть в облаке и идентичен. Пропуск." >> "$LOG"
+                continue
+            fi
         fi
-    fi
 
-    # Шаг 3: Передача в облако
-    echo "  [SYNC] Начинаю передачу в MinIO ($MINIO_ENDPOINT)..." >> "$LOG"
-    
-    if mc cp "$FILE" "$DEST_CLOUD/" --quiet >> "$LOG" 2>&1; then
-        # Проверяем хэш после загрузки
-        CLOUD_HASH=$(mc ls --json "$DEST_CLOUD/$FNAME" | grep -oP '(?<="etag":")[^"]+' | tr -d '"')
+        # Передача в облако
+        echo "  [SYNC] Начинаю передачу в MinIO..." >> "$LOG"
+        
+        if /usr/local/bin/mc cp "$FILE" "$DEST_CLOUD/" --quiet >> "$LOG" 2>&1; then
+            # Проверка хэша после загрузки
+            CLOUD_HASH=$(/usr/local/bin/mc ls --json "$DEST_CLOUD/$FNAME" | grep -oP '(?<="etag":")[^"]+' | tr -d '"')
 
-        if [ "$SOURCE_HASH" == "$CLOUD_HASH" ]; then
-            echo "  [OK] Копия в облаке: Хэши совпали." >> "$LOG"
-            # Раскомментируй строку ниже, если хочешь, чтобы старые файлы удалялись с Windows:
-            # rm "$FILE" && echo "  [RM] Оригинал удален (миграция завершена)." >> "$LOG"
+            if [ "$SOURCE_HASH" == "$CLOUD_HASH" ]; then
+                echo "  [OK] Копия в облаке: Хэши совпали." >> "$LOG"
+            else
+                echo "  [ALARM] Копия ПОВРЕЖДЕНА (Mismatch MD5)!" >> "$LOG"
+                CHECKSUM_STATUS=0
+            fi
         else
-            echo "  [ALARM] Копия ПОВРЕЖДЕНА (Mismatch MD5)!" >> "$LOG"
+            echo "  [ERROR] Ошибка сетевой передачи в облако." >> "$LOG"
             CHECKSUM_STATUS=0
         fi
+    done
+
+    # --- 3. СБОР МЕТРИК ДЛЯ VICTORIAMETRICS ---
+    ALL_FILES=$(/usr/local/bin/mc ls "$DEST_CLOUD" --recursive 2>/dev/null)
+
+    COUNT_TOTAL=$(echo "$ALL_FILES" | wc -l)
+    COUNT_PDF=$(echo "$ALL_FILES" | grep -i ".pdf" | wc -l)
+    COUNT_DOCX=$(echo "$ALL_FILES" | grep -i ".docx" | wc -l)
+    COUNT_TXT=$(echo "$ALL_FILES" | grep -i ".txt" | wc -l)
+
+    curl -s --connect-timeout 2 "$MINIO_ENDPOINT" > /dev/null && STATUS_CLOUD=1 || STATUS_CLOUD=0
+    DISK_FREE_LOCAL=$(df / | awk 'NR==2 {print 100-$5}' | sed 's/%//' | cut -d. -f1)
+    STORAGE_USAGE_CLOUD=$(/usr/local/bin/mc du "$DEST_CLOUD" --json 2>/dev/null | grep -oP '(?<="size":)\d+' || echo 0)
+
+    # === ИСПРАВЛЕННЫЙ БЛОК ОТПРАВКИ (Ничего не убрано, просто правильный формат) ===
+    # Метрики для VictoriaMetrics (Influx format)
+    DATA="minio_stats,host=$(hostname) total=$COUNT_TOTAL,pdf=$COUNT_PDF,docx=$COUNT_DOCX,txt=$COUNT_TXT,status_cloud=$STATUS_CLOUD,disk_free=$DISK_FREE_LOCAL,storage_usage=$STORAGE_USAGE_CLOUD,integrity=$CHECKSUM_STATUS"
+
+    # Отправка
+    if curl -s -X POST 'http://localhost:8428/write' --data-binary "$DATA" > /dev/null; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') Метрики успешно отправлены." >> "$LOG"
     else
-        echo "  [ERROR] Ошибка сетевой передачи в облако." >> "$LOG"
-        CHECKSUM_STATUS=0
+        echo "$(date '+%Y-%m-%d %H:%M:%S') ОШИБКА при отправке метрик." >> "$LOG"
     fi
-done
 
-# --- 3. СБОР МЕТРИК ДЛЯ VICTORIAMETRICS ---
-
-# Сбор статистики по типам файлов в облаке
-ALL_FILES=$(mc ls "$DEST_CLOUD" --recursive 2>/dev/null)
-
-COUNT_TOTAL=$(echo "$ALL_FILES" | wc -l)
-COUNT_PDF=$(echo "$ALL_FILES" | grep -i ".pdf" | wc -l)
-COUNT_DOCX=$(echo "$ALL_FILES" | grep -i ".docx" | wc -l)
-COUNT_TXT=$(echo "$ALL_FILES" | grep -i ".txt" | wc -l)
-
-# Проверка доступности MinIO
-curl -s --connect-timeout 2 "$MINIO_ENDPOINT" > /dev/null && STATUS_CLOUD=1 || STATUS_CLOUD=0
-
-# Место на диске сервера (в процентах свободно)
-DISK_FREE_LOCAL=$(df / | awk 'NR==2 {print 100-$5}' | sed 's/%//')
-
-# Объем данных в байтах
-STORAGE_USAGE_CLOUD=$(mc du "$DEST_CLOUD" --json 2>/dev/null | grep -oP '(?<="size":)\d+' || echo 0)
-
-# Формирование пакета данных для VictoriaMetrics
-DATA="minio_files_total count=$COUNT_TOTAL
-minio_files_pdf count=$COUNT_PDF
-minio_files_docx count=$COUNT_DOCX
-minio_files_txt count=$COUNT_TXT
-minio_status_cloud value=$STATUS_CLOUD
-system_disk_free_percent value=$DISK_FREE_LOCAL
-minio_storage_usage_bytes value=${STORAGE_USAGE_CLOUD:-0}
-minio_integrity_status value=$CHECKSUM_STATUS"
-
-# Отправка метрик на порт 8428
-echo "$DATA" | curl -s -X POST 'http://localhost:8428/write' --data-binary @-
-
-if [ $? -eq 0 ]; then
-    echo "$(date '+%Y-%m-%d %H:%M:%S') Метрики успешно отправлены." >> "$LOG"
-else
-    echo "$(date '+%Y-%m-%d %H:%M:%S') ОШИБКА при отправке метрик в VictoriaMetrics." >> "$LOG"
-fi
-
-echo "$(date '+%Y-%m-%d %H:%M:%S') --- ЦИКЛ ЗАВЕРШЕН. СЛЕДУЮЩАЯ ПРОВЕРКА ЧЕРЕЗ 5 МИНУТ ---" >> "$LOG"
-
-    # --- ПАУЗА (чтобы не нагружать процессор) ---
+    echo "$(date '+%Y-%m-%d %H:%M:%S') --- ЦИКЛ ЗАВЕРШЕН. ПАУЗА 5 МИНУТ ---" >> "$LOG"
     sleep 300 
 done
