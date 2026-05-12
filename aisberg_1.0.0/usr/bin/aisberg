@@ -11,7 +11,7 @@ fi
 
 LOG="/var/log/aisberg/sync.log"
 MOUNT_POINT="/mnt/win_client"
-SOURCE="$MOUNT_POINT/Users"
+SOURCE="$MOUNT_POINT"
 
 # Извлекаем адрес из конфига (удаляем http:// и порт) для пинга
 TARGET_HOST=$(echo "$MINIO_ENDPOINT" | sed -e 's|^[^/]*//||' -e 's|:[0-9]*$||')
@@ -64,7 +64,7 @@ while true; do
         
         # Поиск файлов (используем MIGRATION_DAYS из конфига)
         find "$SOURCE" -type f \( -name "*.pdf" -o -name "*.docx" -o -name "*.txt" \) \
-        -atime +"$MIGRATION_DAYS" -not -path "*/AppData/*" 2>/dev/null | while read -r FILE; do
+        -mtime +"$MIGRATION_DAYS" -not -path "*/AppData/*" 2>/dev/null | while read -r FILE; do
             
             FNAME=$(basename "$FILE")
             SOURCE_HASH=$(md5sum "$FILE" | awk '{ print $1 }')
