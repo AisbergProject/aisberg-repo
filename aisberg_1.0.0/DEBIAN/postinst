@@ -76,8 +76,25 @@ MINIO_ENDPOINT="$MINIO_URL"
 MIGRATION_DAYS="$COLD_DAYS"
 EOF
 else
-    # ... (твой код для CLOUD роли) ...
+    echo "Настройка роли CLOUD (установка MinIO как службы)..."
+    
+    # 1. Загружаем бинарник. 
+    mkdir -p /usr/local/bin
+    curl -L https://dl.min.io/server/minio/release/linux-amd64/minio -o /usr/local/bin/minio || echo "Не удалось скачать MinIO"
+    
+    # Устанавливаем права только если файл скачался
+    [ -f /usr/local/bin/minio ] && chmod +x /usr/local/bin/minio
+    
+    # 2. Создаем папку для данных
+    mkdir -p /mnt/data
+    
+    # 3. Сохраняем конфиг
     echo 'ROLE="CLOUD"' > /etc/aisberg/aisberg.conf
+
+    # 4. Включаем и запускаем сервис MinIO
+    systemctl daemon-reload || true
+    systemctl enable minio || true
+    systemctl restart minio || true
 fi
 
 # === ФИНАЛЬНАЯ АВТОМАТИЗАЦИЯ (ВСТАВЛЯТЬ СЮДА) ===
