@@ -124,4 +124,32 @@ fi
 
 echo "A.I.S.B.E.R.G. успешно автоматизирован и запущен!"
 
+# === НОВОЕ: АВТО-НАСТРОЙКА GRAFANA ===
+echo "Настройка визуализации Grafana..."
+
+# Запускаем Grafana, если она еще не запущена
+systemctl daemon-reload || true
+systemctl enable grafana-server || true
+systemctl start grafana-server || true
+
+# Ждем 5 секунд, чтобы API Grafana успел подняться
+sleep 5
+
+# 1. Создаем Data Source (подключаем VictoriaMetrics)
+# Мы используем стандартный логин/пароль admin:admin
+curl -s -X POST -H "Content-Type: application/json" \
+-d '{
+  "name":"VictoriaMetrics",
+  "type":"prometheus",
+  "url":"http://localhost:8428",
+  "access":"proxy",
+  "isDefault":true
+}' http://admin:admin@localhost:3000/api/datasources || echo "Data Source уже существует или Grafana недоступна"
+
+# 2. Установка плагинов (опционально, если захочешь крутые чарты)
+# grafana-cli plugins install grafana-piechart-panel || true
+
+systemctl restart grafana-server || true
+echo "Grafana настроена: http://localhost:3000 (admin/admin)"
+
 exit 0
