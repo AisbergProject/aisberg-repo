@@ -10,29 +10,30 @@ else
 fi
 
 LOG="/var/log/aisberg/sync.log"
-# Теперь берем путь из точки монтирования
-SOURCE="/mnt/win_client"
+MOUNT_POINT="/mnt/win_client"
 
-# Извлекаем адрес из конфига для проверки связи
+echo "$(date) --- СТАРТ ЦИКЛА АВТОМАТИЗАЦИИ ---" >> "$LOG"
+
+# 2. Автоматическое монтирование Windows
+mkdir -p "$MOUNT_POINT"
+if ! mountpoint -q "$MOUNT_POINT"; then
+    echo "Попытка монтирования //${WINDOWS_IP}/${WIN_SHARE}..." >> "$LOG"
+    mount -t cifs "//${WINDOWS_IP}/${WIN_SHARE}" "$MOUNT_POINT" \
+          -o username="$WIN_USER",password="$WIN_PASS",iocharset=utf8,vers=3.0 || \
+          echo "ОШИБКА: Не удалось примонтировать Windows" >> "$LOG"
+fi
+
+# Извлекаем адрес из конфига (удаляем http:// и порт :9000)
 TARGET_HOST=$(echo "$MINIO_ENDPOINT" | sed -e 's|^[^/]*//||' -e 's|:[0-9]*$||')
 
 echo "$(date '+%Y-%m-%d %H:%M:%S') --- СТАРТ СЕРВИСА A.I.S.B.E.R.G. ---" >> "$LOG"
-
-# === АВТОМАТИЧЕСКОЕ МОНТИРОВАНИЕ WINDOWS ===
-mkdir -p "$SOURCE"
-if ! mountpoint -q "$SOURCE"; then
-    echo "$(date '+%Y-%m-%d %H:%M:%S') Попытка монтирования //${WINDOWS_IP}/${WIN_SHARE}..." >> "$LOG"
-    # Монтируем, используя переменные из конфига
-    mount -t cifs "//${WINDOWS_IP}/${WIN_SHARE}" "$SOURCE" \
-          -o username="$WIN_USER",password="$WIN_PASS",iocharset=utf8,vers=3.0 || \
-          echo "$(date '+%Y-%m-%d %H:%M:%S') ОШИБКА: Не удалось примонтировать Windows" >> "$LOG"
-fi
-
 echo "$(date '+%Y-%m-%d %H:%M:%S') --- Ожидание доступности облака ($TARGET_HOST)... ---" >> "$LOG"
 
 for i in {1..10}; do
+    # Проверяем доступность именно того узла, который указан в конфиге
     if ping -c 1 -W 1 "$TARGET_HOST" > /dev/null 2>&1; then
         echo "$(date '+%Y-%m-%d %H:%M:%S') --- Сеть доступна. Начинаем настройку. ---" >> "$LOG"
+        # Небольшая пауза, чтобы порт 9000 точно успел открыться после пинга
         sleep 2
         break
     fi
@@ -40,12 +41,15 @@ for i in {1..10}; do
     sleep 3
 done
 
-# === АВТО-НАСТРОЙКА БАКЕТА ===
+# === ДОБАВЛЕНО: Авто-настройка бакета при старте ===
+# Используем имя хоста в нижнем регистре для уникальности бакета
 BUCKET_NAME="cold-storage-$(hostname | tr '[:upper:]' '[:lower:]')"
 DEST_CLOUD="mycloud/$BUCKET_NAME"
 
+# 1. Настройка псевдонима
 /usr/local/bin/mc alias set mycloud "$MINIO_ENDPOINT" minioadmin minioadmin --api S3v4 >> "$LOG" 2>&1
 
+# 2. ПРОВЕРКА БАКЕТА
 if /usr/local/bin/mc ls "mycloud/$BUCKET_NAME" > /dev/null 2>&1; then
     echo "$(date '+%Y-%m-%d %H:%M:%S') --- Бакет '$BUCKET_NAME' уже существует. ---" >> "$LOG"
 else
@@ -53,47 +57,57 @@ else
     /usr/local/bin/mc mb "mycloud/$BUCKET_NAME" >> "$LOG" 2>&1
 fi
 
+# Переменная для статуса целостности
+CHECKSUM_STATUS=1
+
 # --- НАЧАЛО БЕСКОНЕЧНОГО ЦИКЛА ---
 while true; do
     CHECKSUM_STATUS=1
     echo "$(date '+%Y-%m-%d %H:%M:%S') --- СТАРТ ЦИКЛА МИГРАЦИИ ---" >> "$LOG"
 
-    # Проверяем монтирование внутри цикла (на случай если сеть моргнула)
-    if ! mountpoint -q "$SOURCE"; then
-        mount -t cifs "//${WINDOWS_IP}/${WIN_SHARE}" "$SOURCE" -o username="$WIN_USER",password="$WIN_PASS",iocharset=utf8,vers=3.0
-    fi
-
     # --- 2. ОСНОВНОЙ ЦИКЛ ПОИСКА И ПЕРЕНОСА ---
-    # Для теста можно изменить -atime +"$MIGRATION_DAYS" на -mmin +1
     find "$SOURCE" -type f \( -name "*.pdf" -o -name "*.docx" -o -name "*.txt" \) \
     -atime +"$MIGRATION_DAYS" -not -path "*/AppData/*" 2>/dev/null | while read -r FILE; do
-
+        
         FNAME=$(basename "$FILE")
+        echo "$(date '+%Y-%m-%d %H:%M:%S') Работа с файлом: $FNAME" >> "$LOG"
+
         SOURCE_HASH=$(md5sum "$FILE" | awk '{ print $1 }')
 
         # SMART SYNC (Проверка существования)
         CLOUD_CHECK=$(/usr/local/bin/mc ls --json "$DEST_CLOUD/$FNAME" 2>/dev/null)
-
+        
         if [ -n "$CLOUD_CHECK" ]; then
             REMOTE_HASH=$(echo "$CLOUD_CHECK" | grep -oP '(?<="etag":")[^"]+' | tr -d '"')
+
             if [ "$SOURCE_HASH" == "$REMOTE_HASH" ]; then
+                echo "  [SKIP] Файл уже есть в облаке и идентичен. Пропуск." >> "$LOG"
                 continue
             fi
         fi
 
-        echo "$(date '+%Y-%m-%d %H:%M:%S') [SYNC] Передача: $FNAME" >> "$LOG"
+        # Передача в облако
+        echo "  [SYNC] Начинаю передачу в MinIO..." >> "$LOG"
+        
         if /usr/local/bin/mc cp "$FILE" "$DEST_CLOUD/" --quiet >> "$LOG" 2>&1; then
+            # Проверка хэша после загрузки
             CLOUD_HASH=$(/usr/local/bin/mc ls --json "$DEST_CLOUD/$FNAME" | grep -oP '(?<="etag":")[^"]+' | tr -d '"')
-            if [ "$SOURCE_HASH" != "$CLOUD_HASH" ]; then
+
+            if [ "$SOURCE_HASH" == "$CLOUD_HASH" ]; then
+                echo "  [OK] Копия в облаке: Хэши совпали." >> "$LOG"
+            else
+                echo "  [ALARM] Копия ПОВРЕЖДЕНА (Mismatch MD5)!" >> "$LOG"
                 CHECKSUM_STATUS=0
             fi
         else
+            echo "  [ERROR] Ошибка сетевой передачи в облако." >> "$LOG"
             CHECKSUM_STATUS=0
         fi
     done
 
     # --- 3. СБОР МЕТРИК ДЛЯ VICTORIAMETRICS ---
     ALL_FILES=$(/usr/local/bin/mc ls "$DEST_CLOUD" --recursive 2>/dev/null)
+
     COUNT_TOTAL=$(echo "$ALL_FILES" | wc -l)
     COUNT_PDF=$(echo "$ALL_FILES" | grep -i ".pdf" | wc -l)
     COUNT_DOCX=$(echo "$ALL_FILES" | grep -i ".docx" | wc -l)
@@ -103,9 +117,16 @@ while true; do
     DISK_FREE_LOCAL=$(df / | awk 'NR==2 {print 100-$5}' | sed 's/%//' | cut -d. -f1)
     STORAGE_USAGE_CLOUD=$(/usr/local/bin/mc du "$DEST_CLOUD" --json 2>/dev/null | grep -oP '(?<="size":)\d+' || echo 0)
 
+    # === ИСПРАВЛЕННЫЙ БЛОК ОТПРАВКИ (Ничего не убрано, просто правильный формат) ===
+    # Метрики для VictoriaMetrics (Influx format)
     DATA="minio_stats,host=$(hostname) total=$COUNT_TOTAL,pdf=$COUNT_PDF,docx=$COUNT_DOCX,txt=$COUNT_TXT,status_cloud=$STATUS_CLOUD,disk_free=$DISK_FREE_LOCAL,storage_usage=$STORAGE_USAGE_CLOUD,integrity=$CHECKSUM_STATUS"
 
-    curl -s -X POST 'http://localhost:8428/write' --data-binary "$DATA" > /dev/null
+    # Отправка
+    if curl -s -X POST 'http://localhost:8428/write' --data-binary "$DATA" > /dev/null; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') Метрики успешно отправлены." >> "$LOG"
+    else
+        echo "$(date '+%Y-%m-%d %H:%M:%S') ОШИБКА при отправке метрик." >> "$LOG"
+    fi
 
     echo "$(date '+%Y-%m-%d %H:%M:%S') --- ЦИКЛ ЗАВЕРШЕН. ПАУЗА 5 МИНУТ ---" >> "$LOG"
     sleep 300 
