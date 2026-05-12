@@ -43,7 +43,6 @@ systemctl restart victoriametrics || true
 # =================================================================
 
 if [ "$ROLE" = "Server" ]; then
-    # Безопасно получаем параметры для сервера
     db_get aisberg/win_ip || true
     WIN_IP="${RET:-192.168.1.10}"
     
@@ -53,51 +52,59 @@ if [ "$ROLE" = "Server" ]; then
     db_get aisberg/cold_days || true
     COLD_DAYS="${RET:-30}"
 
-    # === НОВОЕ: УСТАНОВКА MC (MinIO Client для авто-создания бакетов) ===
+    # НОВОЕ: Читаем данные для Windows-шары из debconf
+    db_get aisberg/win_user || true
+    WIN_USER="${RET:-AisbergTest}"
+    db_get aisberg/win_pass || true
+    WIN_PASS="${RET:-root}"
+    db_get aisberg/win_share || true
+    WIN_SHARE="${RET:-AisbergData}"
+
+    # Установка MC
     echo "Установка MinIO Client..."
     curl -L https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc
     chmod +x /usr/local/bin/mc
-    # =================================================================
 
+    # Записываем расширенный конфиг
     cat <<EOF > /etc/aisberg/aisberg.conf
 ROLE="SERVER"
 WINDOWS_IP="$WIN_IP"
+WIN_USER="$WIN_USER"
+WIN_PASS="$WIN_PASS"
+WIN_SHARE="$WIN_SHARE"
 MINIO_ENDPOINT="$MINIO_URL"
 MIGRATION_DAYS="$COLD_DAYS"
 EOF
 else
-    echo "Настройка роли CLOUD (установка MinIO как службы)..."
-    
-    # 1. Загружаем бинарник. 
-    mkdir -p /usr/local/bin
-    curl -L https://dl.min.io/server/minio/release/linux-amd64/minio -o /usr/local/bin/minio || echo "Не удалось скачать MinIO"
-    
-    # Устанавливаем права только если файл скачался
-    [ -f /usr/local/bin/minio ] && chmod +x /usr/local/bin/minio
-    
-    # 2. Создаем папку для данных
-    mkdir -p /mnt/data
-    
-    # 3. Сохраняем конфиг
+    # ... (твой код для CLOUD роли) ...
     echo 'ROLE="CLOUD"' > /etc/aisberg/aisberg.conf
-
-    # 4. Включаем и запускаем сервис MinIO
-    systemctl daemon-reload || true
-    systemctl enable minio || true
-    systemctl restart minio || true
 fi
 
-# Создаем лог-файл
+# === ФИНАЛЬНАЯ АВТОМАТИЗАЦИЯ (ВСТАВЛЯТЬ СЮДА) ===
+
+# Создаем лог-файл и даем права
 touch /var/log/aisberg/sync.log
 chmod 666 /var/log/aisberg/sync.log
 
-# Перезагружаем конфиги systemd
+echo "Финальная настройка сервисов..."
 systemctl daemon-reload || true
 
-# Если это роль Server, запускаем основной сервис синхронизации
+# Включаем и запускаем мониторинг (нужен всем)
+systemctl enable victoriametrics || true
+systemctl restart victoriametrics || true
+
+# Если сервер — запускаем синхронизацию
 if [ "$ROLE" = "Server" ]; then
     systemctl enable aisberg || true
     systemctl restart aisberg || true
 fi
+
+# Если облако — запускаем хранилище
+if [ "$ROLE" = "CLOUD" ]; then
+    systemctl enable minio || true
+    systemctl restart minio || true
+fi
+
+echo "A.I.S.B.E.R.G. успешно автоматизирован и запущен!"
 
 exit 0

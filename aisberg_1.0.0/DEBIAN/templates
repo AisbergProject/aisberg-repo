@@ -10,6 +10,21 @@ Type: string
 Default: 192.168.1.10
 Description: IP-адрес Windows-сервера:
 
+Template: aisberg/win_user
+Type: string
+Default: AisbergTest
+Description: Имя пользователя Windows (SMB):
+
+Template: aisberg/win_pass
+Type: password
+Default: root
+Description: Пароль пользователя Windows:
+
+Template: aisberg/win_share
+Type: string
+Default: AisbergData
+Description: Имя общей папки (Shared Folder) в Windows:
+
 Template: aisberg/minio_url
 Type: string
 Default: http://localhost:9000
