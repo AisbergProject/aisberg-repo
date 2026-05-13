@@ -128,31 +128,31 @@ echo "---------------------------------------------------------------"
 echo "A.I.S.B.E.R.G. готов к работе!"
 echo "---------------------------------------------------------------"
 
-if ! dpkg -s grafana >/dev/null 2>&1; then
-    # Если Grafana не установлена — даем команду пользователю
-    echo "ВНИМАНИЕ: Для визуализации данных необходимо установить Grafana."
-    echo "Для завершения настройки выполните команду вручную:"
-    echo ""
-    echo "  sudo dpkg -i /tmp/grafana_10.4.2_amd64.deb && sudo apt install -f"
-    echo ""
-    echo "После установки Grafana будет доступна на http://localhost:3000"
+# Проверяем наличие Grafana и настраиваем её ТОЛЬКО на роли Server
+if [ "$ROLE" = "Server" ]; then
+    if ! dpkg -s grafana >/dev/null 2>&1; then
+        echo "ВНИМАНИЕ: На роли Server рекомендуется установить Grafana для мониторинга."
+        echo "Для завершения настройки выполните команду вручную:"
+        echo ""
+        echo "  sudo dpkg -i /tmp/grafana_10.4.2_amd64.deb && sudo apt install -f"
+        echo ""
+        echo "После установки панель будет доступна на http://localhost:3000"
+    else
+        echo "Grafana обнаружена. Настройка подключения VictoriaMetrics..."
+        sleep 2
+        curl -s -X POST -H "Content-Type: application/json" \
+        -d '{
+          "name":"VictoriaMetrics",
+          "type":"prometheus",
+          "url":"http://localhost:8428",
+          "access":"proxy",
+          "isDefault":true
+        }' http://admin:admin@localhost:3000/api/datasources || echo "API Grafana пока недоступен."
+        
+        echo "Настройка мониторинга на сервере завершена."
+    fi
 else
-    # Если Grafana уже есть (например, при переустановке пакета) — настраиваем источник данных
-    echo "Grafana обнаружена. Настройка подключения VictoriaMetrics..."
-    
-    # Даем сервису 2 секунды, если он только что перезапустился
-    sleep 2
-    
-    curl -s -X POST -H "Content-Type: application/json" \
-    -d '{
-      "name":"VictoriaMetrics",
-      "type":"prometheus",
-      "url":"http://localhost:8428",
-      "access":"proxy",
-      "isDefault":true
-    }' http://admin:admin@localhost:3000/api/datasources || echo "API Grafana недоступен (возможно, сервис еще загружается)."
-    
-    echo "Настройка мониторинга завершена."
+    echo "Роль CLOUD: Grafana не требуется. Хранилище MinIO запущено."
 fi
 
 exit 0
