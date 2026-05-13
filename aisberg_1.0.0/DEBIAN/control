@@ -1,8 +1,8 @@
 Package: aisberg
-Version: 1.0.35
+Version: 1.0.36
 Section: utils
 Priority: optional
 Architecture: all
-Depends: curl, coreutils, debconf, cifs-utils, mc,  python3, python3-requests, wget, ca-certificates, psmisc
+Depends: curl, coreutils, debconf, cifs-utils, mc,  python3, python3-requests, wget, ca-certificates
 Maintainer: AisbergProject
 Description: Hybrid file storage migration platform
