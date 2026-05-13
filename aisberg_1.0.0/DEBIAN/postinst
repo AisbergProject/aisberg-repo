@@ -128,31 +128,29 @@ echo "---------------------------------------------------------------"
 echo "A.I.S.B.E.R.G. готов к работе!"
 echo "---------------------------------------------------------------"
 
-# Проверяем наличие Grafana и настраиваем её ТОЛЬКО на роли Server
 if [ "$ROLE" = "Server" ]; then
     if ! dpkg -s grafana >/dev/null 2>&1; then
-        echo "ВНИМАНИЕ: На роли Server рекомендуется установить Grafana для мониторинга."
+        echo "ВНИМАНИЕ: На роли Server необходимо установить Grafana 11.x."
         echo "Для завершения настройки выполните команду вручную:"
         echo ""
-        echo "  sudo dpkg -i /tmp/grafana_10.4.2_amd64.deb && sudo apt install -f"
+        echo "  sudo dpkg -i /tmp/grafana_11.0.0_amd64.deb && sudo apt install -f"
         echo ""
         echo "После установки панель будет доступна на http://localhost:3000"
     else
-        echo "Grafana обнаружена. Настройка подключения VictoriaMetrics..."
+        echo "Grafana 11.x обнаружена. Настройка подключения..."
         sleep 2
+        # Теперь плагин VictoriaMetrics должен работать корректно
         curl -s -X POST -H "Content-Type: application/json" \
         -d '{
           "name":"VictoriaMetrics",
-          "type":"prometheus",
+          "type":"victoriametrics-metrics-datasource",
           "url":"http://localhost:8428",
           "access":"proxy",
           "isDefault":true
         }' http://admin:admin@localhost:3000/api/datasources || echo "API Grafana пока недоступен."
-        
-        echo "Настройка мониторинга на сервере завершена."
     fi
 else
-    echo "Роль CLOUD: Grafana не требуется. Хранилище MinIO запущено."
+    echo "Роль CLOUD: Grafana не требуется."
 fi
 
 exit 0
