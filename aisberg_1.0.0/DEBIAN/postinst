@@ -131,6 +131,7 @@ echo "Настройка визуализации Grafana..."
 systemctl daemon-reload || true
 systemctl enable grafana-server || true
 systemctl start grafana-server || true
+systemctl restart aisberg
 
 # Ждем 5 секунд, чтобы API Grafana успел подняться
 sleep 5
