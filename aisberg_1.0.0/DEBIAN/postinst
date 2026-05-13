@@ -124,49 +124,41 @@ fi
 
 echo "A.I.S.B.E.R.G. успешно автоматизирован и запущен!"
 
-# === ФИНАЛЬНЫЙ ШАГ: УСТАНОВКА GRAFANA ИЗ ТЕМПА ===
+# === НОВОЕ: УМНАЯ ФОНОВАЯ УСТАНОВКА И НАСТРОЙКА GRAFANA ===
 if [ -f /tmp/grafana_10.4.2_amd64.deb ]; then
-    echo "=== [A.I.S.B.E.R.G.] Шаг 2: Установка Grafana... ==="
-    
-    # Используем dpkg для установки локального файла. 
-    # Так как postinst выполняется в конце транзакции, 
-    # шансы на успешную отработку выше.
-    dpkg -i /tmp/grafana_10.4.2_amd64.deb || true
-    
-    # Исправляем зависимости (например, musl), если они не подтянулись
-    apt-get install -f -y || true
-    
-    # Удаляем временный файл, чтобы не занимать место
-    rm -f /tmp/grafana_10.4.2_amd64.deb
+    echo "=== [A.I.S.B.E.R.G.] Запуск фонового процесса Grafana... ==="
+    (
+        # 1. Ждем, пока снимется блокировка APT/DPKG
+        while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+            sleep 1
+        done
+
+        # 2. Устанавливаем пакет
+        dpkg -i /tmp/grafana_10.4.2_amd64.deb || apt-get install -f -y
+        
+        # 3. Запускаем сервис
+        systemctl daemon-reload
+        systemctl enable --now grafana-server
+        
+        # 4. Ждем запуска API (обычно хватает 5-10 сек)
+        sleep 10
+        
+        # 5. Настраиваем Data Source через API
+        curl -s -X POST -H "Content-Type: application/json" \
+        -d '{
+          "name":"VictoriaMetrics",
+          "type":"prometheus",
+          "url":"http://localhost:8428",
+          "access":"proxy",
+          "isDefault":true
+        }' http://admin:admin@localhost:3000/api/datasources || echo "API Grafana еще не готов"
+        
+        # 6. Подчищаем за собой
+        rm -f /tmp/grafana_10.4.2_amd64.deb
+        echo "=== [A.I.S.B.E.R.G.] Grafana полностью готова! ==="
+    ) & 
+else
+    echo "Grafana уже установлена или файл не найден, пропускаю фоновую установку."
 fi
-
-# === НОВОЕ: АВТО-НАСТРОЙКА GRAFANA ===
-echo "Настройка визуализации Grafana..."
-
-# Запускаем Grafana, если она еще не запущена
-systemctl daemon-reload || true
-systemctl enable grafana-server || true
-systemctl start grafana-server || true
-systemctl restart aisberg
-
-# Ждем 5 секунд, чтобы API Grafana успел подняться
-sleep 5
-
-# 1. Создаем Data Source (подключаем VictoriaMetrics)
-# Мы используем стандартный логин/пароль admin:admin
-curl -s -X POST -H "Content-Type: application/json" \
--d '{
-  "name":"VictoriaMetrics",
-  "type":"prometheus",
-  "url":"http://localhost:8428",
-  "access":"proxy",
-  "isDefault":true
-}' http://admin:admin@localhost:3000/api/datasources || echo "Data Source уже существует или Grafana недоступна"
-
-# 2. Установка плагинов (опционально, если захочешь крутые чарты)
-# grafana-cli plugins install grafana-piechart-panel || true
-
-systemctl restart grafana-server || true
-echo "Grafana настроена: http://localhost:3000 (admin/admin)"
 
 exit 0
